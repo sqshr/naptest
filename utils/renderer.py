@@ -1,6 +1,8 @@
-""" utils/renderer.py
-# Code to read ./config/paths json file and support module command concatinattion
-# AKA my seclists isnt saved in /repos """
+"""
+Code to read ./config/paths json file and support module command concatinattion
+
+AKA my seclists isnt saved in /repos 
+"""
 import json
 import os
 from collections import ChainMap
