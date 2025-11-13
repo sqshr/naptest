@@ -1,10 +1,10 @@
 {
     "vars" : {
         "paths": {
-            "nuclei": "/root/go/bin/nuclei"
+            "nuclei": "/usr/bin/nuclei"
         },
         "repos": {
-            "seclists": "/repos/SecLists"
+            "seclists": "/root/pentesting/wordlists/SecLists"
         }
     }
 }

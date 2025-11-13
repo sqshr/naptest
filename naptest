@@ -674,48 +674,98 @@ def findservices():
 
 # Tries to work out if an unknown service is http or https
 def guesshttp():
-        import requests,urllib3
-        urllib3.disable_warnings(category=urllib3.exceptions.InsecureRequestWarning)
-        global servicearray
-        
-        # Get all Services from DB
-        print("[+] Identifying unknown services and trying to work out if they're actually HTTP or HTTPS")
-        guessedhttp = []
-        guessedhttps = []
-        con=lite.connect(db)
-        cur = con.cursor()
-        cur.execute('SELECT distinct service,protocol FROM openports;')
-        servicelist = cur.fetchall()
-        for service,protocol in servicelist:
-                if isknownservice(service) is False and protocol == "tcp" and "http" not in service:
-                        responses = []
-                        nowlist = []
-                        print("         "+service+"?")
-                        cur.execute('SELECT ip ||":"|| port FROM openports WHERE service="'+service+'"and protocol="'+protocol+'";')
-                        hostports=cur.fetchall()
-                        for line in hostports:
-                                nowlist.extend(line)
-                                address = line[0]
-                                try:
-                                        x = requests.get('http://'+address)
-                                        responses.append("http")
-                                except:
-                                        x = requests.get('https://'+address, verify=False)
-                                        responses.append("https")
-                
-                        if set(responses) == {'http'}:
-                                print("         [!]"+service+ " is HTTP")
-                                guessedhttp.extend(nowlist)
-                        elif set(responses) == {"https"}:
-                                print("         [!]"+service+ " is HTTPS")
-                                guessedhttps.extend(nowlist)
-        if len(guessedhttp) > 0:
-                servicearray['guessedhttp']={}
-                servicearray['guessedhttp']['tcp']=guessedhttp
-        if len(guessedhttps) > 0:
-                servicearray['guessedhttps']={}
-                servicearray['guessedhttps']['tcp']=guessedhttps
-                servicearray['sslport']['tcp'].extend(guessedhttps)
+    import socket, requests, urllib3
+    from requests.exceptions import SSLError, ConnectionError, RequestException
+    urllib3.disable_warnings(category=urllib3.exceptions.InsecureRequestWarning)
+    global servicearray
+
+    print("[+] Identifying unknown services and trying to work out if they're actually HTTP or HTTPS")
+    guessedhttp = []
+    guessedhttps = []
+    con = lite.connect(db)
+    cur = con.cursor()
+    cur.execute('SELECT distinct service,protocol FROM openports;')
+    servicelist = cur.fetchall()
+
+    def banner_indicates_plaintext(ip, port, timeout=2):
+        """Return banner string if service speaks plaintext (e.g. SMTP/FTP)."""
+        try:
+            with socket.create_connection((ip, int(port)), timeout=timeout) as s:
+                s.settimeout(timeout)
+                try:
+                    data = s.recv(512)
+                    if not data:
+                        return None
+                    # decode best-effort; ignore decode errors
+                    try:
+                        text = data.decode('utf-8', errors='ignore').strip()
+                    except:
+                        text = None
+                    return text
+                except socket.timeout:
+                    return None
+        except Exception:
+            return None
+
+    for service, protocol in servicelist:
+        if isknownservice(service) is False and protocol == "tcp" and "http" not in service:
+            responses = []
+            nowlist = []
+            print("         "+service+"?")
+            cur.execute('SELECT ip || ":" || port FROM openports WHERE service="'+service+'" and protocol="'+protocol+'";')
+            hostports = cur.fetchall()
+            for (address,) in hostports:
+                nowlist.append(address)
+                ip, port = address.split(':', 1)
+
+                # quick banner check to avoid trying HTTP on SMTP/FTP etc
+                banner = banner_indicates_plaintext(ip, port)
+                if banner:
+                    lower = banner.lower()
+                    # common plaintext service banners - expand as needed
+                    if lower.startswith("220") or "smtp" in lower or "ftp" in lower or "ssh" in lower:
+                        # not HTTP; skip
+                        # optionally log: print(f"           {address} - banner indicates {banner}")
+                        continue
+
+                # try plain http first with short timeout
+                try:
+                    r = requests.get('http://'+address, timeout=5)
+                    # success: treat as HTTP
+                    responses.append("http")
+                    continue
+                except (RequestException, ConnectionError, SSLError) as e:
+                    # only try https when it makes sense; e.g. connection refused or TLS required
+                    # If error was SSL-related for HTTP attempt, skip straight to https try.
+                    pass
+
+                # try https with verify=False and short timeout
+                try:
+                    r = requests.get('https://'+address, verify=False, timeout=5)
+                    responses.append("https")
+                    continue
+                except SSLError:
+                    # TLS handshake failed: almost certainly not HTTPS on this port
+                    continue
+                except RequestException:
+                    # general network error - skip
+                    continue
+
+            if set(responses) == {'http'}:
+                print("         [!]"+service+ " is HTTP")
+                guessedhttp.extend(nowlist)
+            elif set(responses) == {"https"}:
+                print("         [!]"+service+ " is HTTPS")
+                guessedhttps.extend(nowlist)
+
+    if guessedhttp:
+        servicearray['guessedhttp'] = {'tcp': guessedhttp}
+    if guessedhttps:
+        servicearray['guessedhttps'] = {'tcp': guessedhttps}
+        if 'sslport' not in servicearray:
+            servicearray['sslport'] = {'tcp': []}
+        servicearray['sslport']['tcp'].extend(guessedhttps)
+
 
 # Writes the services out as an array to file
 def outputarray():
