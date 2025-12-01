@@ -694,11 +694,11 @@ def guesshttp():
                                 nowlist.extend(line)
                                 address = line[0]
                                 try:
-                                        x = requests.get('http://'+address)
+                                        x = requests.get('http://'+address, timeout=2)
                                         responses.append("http")
                                 except:
                                     try:
-                                        x = requests.get('https://'+address, verify=False)
+                                        x = requests.get('https://'+address, verify=False, timeout=2)
                                         responses.append("https")
                                     except:
                                         pass
