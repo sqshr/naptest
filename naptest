@@ -697,8 +697,11 @@ def guesshttp():
                                         x = requests.get('http://'+address)
                                         responses.append("http")
                                 except:
+                                    try:
                                         x = requests.get('https://'+address, verify=False)
                                         responses.append("https")
+                                    except:
+                                        pass
                 
                         if set(responses) == {'http'}:
                                 print("         [!]"+service+ " is HTTP")
