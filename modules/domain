@@ -6,5 +6,6 @@
 "dig-internaldomain": [ "ip", "dig", "dig soa 0.in-addr.arpa @IP | tee DIR/HOST-internaldomain.out", "tcp"],
 "dig-version": [ "ip", "dig", "dig @IP version.bind chaos TXT | tee DIR/HOST-version.out", "udp"],
 "dig-internaldomain": [ "ip", "dig", "dig soa 0.in-addr.arpa @IP | tee DIR/HOST-internaldomain.out", "udp"],
+"nmap-dns": [ "ip", "nmap-dns", "nmap -sV -sC -p 53 $IP -oN nmap-dns/$IP.out", "udp"],
 
 }
