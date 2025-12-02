@@ -5,5 +5,6 @@
 "smtp-user-enum": [ "ip", "smtp-user-enum", "smtp-user-enum -U /usr/share/seclists/Usernames/cirt-default-usernames.txt -t IP | tee DIR/HOST.out", "tcp"],
 "ismtp-open-relay": [ "ip", "ismtp", "ismtp -h HOST -i cybertesting1@urmconsutling.com -x| tee DIR/HOST-openrelay.out", "tcp"],
 "testssl-smtp": [ "ip", "testssl", "testssl -t=smtp -oJ DIR/HOST.out HOST", "tcp"],
+"nmap-smtp": [ "ip", "nmap-smtp", "nmap -sV --script -p PORT -oN DIR/HOST.out IP", "tcp"],
 
 }
