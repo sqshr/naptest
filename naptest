@@ -428,6 +428,15 @@ def closedports_to_ports_list(closedports):
         return clist
 
 
+def validatehostname(original_ip,hostname):
+    import socket
+    resolved_ip = socket.gethostbyname(hostname)
+    if original_ip == resolved_ip:
+        return True
+    else:
+        return False
+
+
 
 def xmlimport(xmlfile):
         import xml.etree.ElementTree as ET
@@ -451,7 +460,10 @@ def xmlimport(xmlfile):
                 hostname = []
                 try:
                         for name in host.find("./hostnames"):
-                                hostname.append(name.attrib['name'])
+                                hn = name.attrib['name']
+                                if validatehostname(ip,hn) is True:
+                                    hostname.append(hn)
+
                 except:
                         pass
                 osmatch =[]
