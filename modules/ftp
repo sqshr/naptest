@@ -3,6 +3,8 @@
 {
 
 "ftpmap": [ "ip", "ftpmap", "ftpmap -S -s IP > DIR/HOST.out", "tcp"],
-"ftpbanner-nmap": [ "ip", "ftpbanner-nmap", "nmap -p PORT --script=banner IP -oN DIR/HOST.nmap", "tcp"]
-
+"nmap-ftpbanner": [ "ip", "nmap-ftp", "nmap -p PORT --script=banner IP -oN DIR/HOST-banner.nmap", "tcp"],
+"nmap-ftp-anon": [ "ip", "nmap-ftp", "nmap -p PORT --script=ftp-anon IP -oN DIR/HOST-anon.nmap", "tcp"],
+"nmap-ftp-syst": [ "ip", "nmap-ftp", "nmap -p PORT --script=ftp-syst IP -oN DIR/HOST-syst.nmap", "tcp"],
+"nmap-ftp-bounce": [ "ip", "nmap-ftp", "nmap -p PORT --script=ftp-bounce IP -oN DIR/HOST-bounce.nmap", "tcp"],
 }
