@@ -2,6 +2,10 @@
 #naptest- not another pentest!
 
 import sys,sqlite3 as lite,os,argparse,ast
+import json
+#import template renderer
+from utils.renderer import load_paths_json, render_cmd, LEGACY_KEYS
+
 
 parser = argparse.ArgumentParser(prog='naptest')
 subparsers = parser.add_subparsers(help='sub-command help')
@@ -38,8 +42,6 @@ parser_test.set_defaults(dest="test")
 
 global args
 args = parser.parse_args()
-
-
 
 #Magic Variables
 dbfile="naptest.db"
@@ -292,7 +294,8 @@ def fullnmapscan(targets):
                 tcpfile = os.path.join(nmapdir,"nmap.tcp."+ip)
                 udpfile = os.path.join(nmapdir,"nmap.udp."+ip)
                 tcpcommands.append(("nmap -vvv -d -d    -Pn -p- -sS -sV -O -T4 -oA "+tcpfile+" --max-retries 3 "+ip+" > /dev/null 2>&1",ip,"fulltcpscan",tcpfile))
-                udpcommands.append(("nmap -vvv -d -d    -Pn -p $(grep \"^Probe UDP\" -A 2 /usr/share/nmap/nmap-service-probes| grep -v \"rarity\|Probe\|--\"| cut -f2 -d \" \" | grep \"^[0-9]\"| tr \",\" \"\n\" | sort | uniq| tr \"\n\" \",\") -sU -T4 -oA "+udpfile+" "+ip+" > /dev/null 2>&1",ip,"fulludpscan",udpfile))
+                #Fix character escaping, my terminal no like this? 
+                udpcommands.append(("nmap -vvv -d -d -Pn -p $(grep \"^Probe UDP\" -A 2 /usr/share/nmap/nmap-service-probes| grep -v \"rarity\\|Probe\\|--\"| cut -f2 -d \" \" | grep \"^[0-9]\"| tr \",\" \"\\n\" | sort | uniq| tr \"\\n\" \",\") -sU -T4 -oA " + udpfile + " " + ip + " > /dev/null 2>&1", ip, "fulludpscan", udpfile))
         commands = tcpcommands + udpcommands
         num = args.parallel
         tp = ThreadPool(num)
@@ -683,51 +686,98 @@ def findservices():
 
 # Tries to work out if an unknown service is http or https
 def guesshttp():
-        import requests,urllib3
-        urllib3.disable_warnings(category=urllib3.exceptions.InsecureRequestWarning)
-        global servicearray
-        
-        # Get all Services from DB
-        print("[+] Identifying unknown services and trying to work out if they're actually HTTP or HTTPS")
-        guessedhttp = []
-        guessedhttps = []
-        con=lite.connect(db)
-        cur = con.cursor()
-        cur.execute('SELECT distinct service,protocol FROM openports;')
-        servicelist = cur.fetchall()
-        for service,protocol in servicelist:
-                if isknownservice(service) is False and protocol == "tcp" and "http" not in service:
-                        responses = []
-                        nowlist = []
-                        print("         "+service+"?")
-                        cur.execute('SELECT ip ||":"|| port FROM openports WHERE service="'+service+'"and protocol="'+protocol+'";')
-                        hostports=cur.fetchall()
-                        for line in hostports:
-                                nowlist.extend(line)
-                                address = line[0]
-                                try:
-                                        x = requests.get('http://'+address, timeout=2)
-                                        responses.append("http")
-                                except:
-                                    try:
-                                        x = requests.get('https://'+address, verify=False, timeout=2)
-                                        responses.append("https")
-                                    except:
-                                        pass
-                
-                        if set(responses) == {'http'}:
-                                print("         [!]"+service+ " is HTTP")
-                                guessedhttp.extend(nowlist)
-                        elif set(responses) == {"https"}:
-                                print("         [!]"+service+ " is HTTPS")
-                                guessedhttps.extend(nowlist)
-        if len(guessedhttp) > 0:
-                servicearray['guessedhttp']={}
-                servicearray['guessedhttp']['tcp']=guessedhttp
-        if len(guessedhttps) > 0:
-                servicearray['guessedhttps']={}
-                servicearray['guessedhttps']['tcp']=guessedhttps
-                servicearray['sslport']['tcp'].extend(guessedhttps)
+    import socket, requests, urllib3
+    from requests.exceptions import SSLError, ConnectionError, RequestException
+    urllib3.disable_warnings(category=urllib3.exceptions.InsecureRequestWarning)
+    global servicearray
+
+    print("[+] Identifying unknown services and trying to work out if they're actually HTTP or HTTPS")
+    guessedhttp = []
+    guessedhttps = []
+    con = lite.connect(db)
+    cur = con.cursor()
+    cur.execute('SELECT distinct service,protocol FROM openports;')
+    servicelist = cur.fetchall()
+
+    def banner_indicates_plaintext(ip, port, timeout=2):
+        """Return banner string if service speaks plaintext (e.g. SMTP/FTP)."""
+        try:
+            with socket.create_connection((ip, int(port)), timeout=timeout) as s:
+                s.settimeout(timeout)
+                try:
+                    data = s.recv(512)
+                    if not data:
+                        return None
+                    # decode best-effort; ignore decode errors
+                    try:
+                        text = data.decode('utf-8', errors='ignore').strip()
+                    except:
+                        text = None
+                    return text
+                except socket.timeout:
+                    return None
+        except Exception:
+            return None
+
+    for service, protocol in servicelist:
+        if isknownservice(service) is False and protocol == "tcp" and "http" not in service:
+            responses = []
+            nowlist = []
+            print("         "+service+"?")
+            cur.execute('SELECT ip || ":" || port FROM openports WHERE service="'+service+'" and protocol="'+protocol+'";')
+            hostports = cur.fetchall()
+            for (address,) in hostports:
+                nowlist.append(address)
+                ip, port = address.split(':', 1)
+
+                # quick banner check to avoid trying HTTP on SMTP/FTP etc
+                banner = banner_indicates_plaintext(ip, port)
+                if banner:
+                    lower = banner.lower()
+                    # common plaintext service banners - expand as needed
+                    if lower.startswith("220") or "smtp" in lower or "ftp" in lower or "ssh" in lower:
+                        # not HTTP; skip
+                        # optionally log: print(f"           {address} - banner indicates {banner}")
+                        continue
+
+                # try plain http first with short timeout
+                try:
+                    r = requests.get('http://'+address, timeout=5)
+                    # success: treat as HTTP
+                    responses.append("http")
+                    continue
+                except (RequestException, ConnectionError, SSLError) as e:
+                    # only try https when it makes sense; e.g. connection refused or TLS required
+                    # If error was SSL-related for HTTP attempt, skip straight to https try.
+                    pass
+
+                # try https with verify=False and short timeout
+                try:
+                    r = requests.get('https://'+address, verify=False, timeout=5)
+                    responses.append("https")
+                    continue
+                except SSLError:
+                    # TLS handshake failed: almost certainly not HTTPS on this port
+                    continue
+                except RequestException:
+                    # general network error - skip
+                    continue
+
+            if set(responses) == {'http'}:
+                print("         [!]"+service+ " is HTTP")
+                guessedhttp.extend(nowlist)
+            elif set(responses) == {"https"}:
+                print("         [!]"+service+ " is HTTPS")
+                guessedhttps.extend(nowlist)
+
+    if guessedhttp:
+        servicearray['guessedhttp'] = {'tcp': guessedhttp}
+    if guessedhttps:
+        servicearray['guessedhttps'] = {'tcp': guessedhttps}
+        if 'sslport' not in servicearray:
+            servicearray['sslport'] = {'tcp': []}
+        servicearray['sslport']['tcp'].extend(guessedhttps)
+
 
 # Writes the services out as an array to file
 def outputarray():
@@ -916,6 +966,8 @@ def test():
         interpreter_commands = []
         valid_commands = []
 
+        paths_dict = load_paths_json() #template rendering --josh
+
         with open(servicearrayfile) as f:
                 response = ast.literal_eval(f.read())
                 servicearray = response
@@ -938,18 +990,41 @@ def test():
                         testcommand=testlist[2]
                         testprotocol=testlist[3]
                         testexe = testcommand.split(" ")[0]
-                        exe = which(testexe)
+
+                        # try config overrides first
+                        candidate_exe = None
+                        if isinstance(paths_dict, dict):
+                            token = testlist[1].lower()
+                            candidate_exe = paths_dict.get(token) \
+                                            or paths_dict.get("paths", {}).get(token) \
+                                            or paths_dict.get("tools", {}).get(token)
+
+                        # fallback
+                        if not candidate_exe:
+                            try:
+                                builtins_min = {"DIR":".","HOST":"HOST","IP":"IP","PORT":"PORT","PROTO":"PROTO"}
+                                rendered = render_cmd(testcommand, builtins_min, paths_dict)
+                                candidate_exe = rendered.split()[0]
+                            except Exception:
+                                candidate_exe = testexe
+
+                        # check absolute path or search PATH
+                        exe = None
+                        if os.path.isabs(candidate_exe):
+                            if os.path.isfile(candidate_exe) and os.access(candidate_exe, os.X_OK):
+                                exe = candidate_exe
+                        else:
+                            exe = which(candidate_exe)
+
                         interpreters = ['perl','python']
-                        
+
                         if exe is None:
-                                invalid_commands.append(test)
-                        elif exe is not None and exe.split("/")[-1] in interpreters:
-                                interpreter_commands.append(test)
-                        elif exe is not None:
-                                valid_commands.append(test)
-                                
-
-
+                            invalid_commands.append(test)
+                        elif os.path.basename(exe) in interpreters:
+                            interpreter_commands.append(test)
+                        else:
+                            valid_commands.append(test)
+ 
                         #if exe is not None and exe.split("/")[-1] in interpreters:
                         #       print("[!] Interpreter detected for "+test+". Make sure the script exists.")
                         
@@ -970,12 +1045,18 @@ def test():
                                         hostport=host.split(":")[1]
                                         
                                         countstr = "    "+test+" ("+str(icmd)+"/"+str(cmdcount)+")"
-                                        towriteout=str(testcommand)
-                                        towriteout=towriteout.replace("DIR", outputfolder)
-                                        towriteout=towriteout.replace("HOST", host)
-                                        towriteout=towriteout.replace("IP", hostip)
-                                        towriteout=towriteout.replace("PORT", hostport)
-                                        towriteout=towriteout.replace("PROTO", proto)
+
+                                        default_templates = {
+                                            "DIR":   outputfolder,
+                                            "HOST":  host,
+                                            "IP":    hostip,
+                                            "PORT":  hostport,
+                                            "PROTO": proto,
+                                        }
+
+                                        #iterate over dict
+                                        towriteout = render_cmd(testcommand, default_templates, paths_dict)
+
                                         cmdqueue.append("echo \'"+countstr+"\' ;"+towriteout+" && echo '"+towriteout+"' >> ./"+successlog+" || echo '"+towriteout+"' >> ./"+faillog)
                                         icmd +=1
                                 cmdqueue.append("echo \"[*] Completed "+test+"\"")  

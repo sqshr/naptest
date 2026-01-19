@@ -1,0 +1,10 @@
+{
+    "vars" : {
+        "paths": {
+            "nuclei": "/root/go/bin/nuclei"
+        },
+        "repos": {
+            "seclists": "/root/pentesting/wordlists/SecLists"
+        }
+    }
+}
